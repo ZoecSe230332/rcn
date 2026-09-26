@@ -25,6 +25,8 @@ static int accept_isock(struct epoll_context* ep_ctx, struct peer_context* p_ctx
         close(sock_fd);
         return 0;
     }
+    const int no_delay = 1;
+    CHECK(setsockopt(sock_fd, SOL_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay)) == -1);
     CHECK(fcntl(sock_fd, F_SETFL, O_NONBLOCK) == -1);
     CHECK(e_epoll_add_getr(ep_ctx, sock_fd, FD_PEER, &p_ctx->peer_stream) == -1);
     p_ctx->peer_state = PEER_CONNECTED;
@@ -113,6 +115,8 @@ static int init_peer_sock(const int port, const char *host) {
     const int isock_fd = TRY(socket(AF_INET, SOCK_STREAM, 0), -1);
     const int timeout_ms = 5000;
     CHECK(setsockopt(isock_fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &timeout_ms, sizeof(timeout_ms)) == -1);
+    const int no_delay = 1;
+    CHECK(setsockopt(isock_fd, SOL_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay)) == -1);
     struct addrinfo* p_info = NULL;
     CHECK(resolve_host(port, host, &p_info) == -1);
     bool connected = false;

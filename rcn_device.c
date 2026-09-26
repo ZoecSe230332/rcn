@@ -204,12 +204,18 @@ int dev_emit_event_msg(struct d_context* d_ctx, struct peer_msg_event event) {
     }
     CHECK(dev == NULL);
     CHECK(stream_queue_writing_device(d_ctx->ep_ctx, dev->stream, event.evt_data) == -1);
+    if (event.evt_data.type == EV_REL) {
+        struct input_event evt = {};
+        evt.type = EV_SYN;
+        evt.code = SYN_REPORT;
+        evt.value = 0;
+        CHECK(stream_queue_writing_device(d_ctx->ep_ctx, dev->stream, evt) == -1);
+    }
     return 0;
 err:
     ERR_LOG("emit_event");
     return -1;
 }
-
 
 int dev_release_virt_keys(struct epoll_context* ep_ctx, struct device* device) {
     struct input_event evt = {};
