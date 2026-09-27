@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/random.h>
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -50,11 +51,13 @@ err:
 }
 
 int dev_init_device(struct epoll_context* ep_ctx, device_arr* devices, const char *dev_path, struct device** out_dev) {
-    *out_dev = TRY(calloc(1, sizeof(struct device)), NULL);
+    struct device* tmp_dev = TRY(calloc(1, sizeof(struct device)), NULL);
     int dev_fd = TRY(open(dev_path, O_RDONLY | O_NONBLOCK), -1);
-    CHECK(e_epoll_add_device(ep_ctx, dev_fd, *out_dev, FD_DEV) == -1);
-    CHECK(dev_get_device_info(dev_fd, *out_dev) == -1);
-    CHECK(u_array_add(&devices->r, *out_dev) == -1);
+    CHECK(e_epoll_add_device(ep_ctx, dev_fd, tmp_dev, FD_DEV) == -1);
+    CHECK(dev_get_device_info(dev_fd, tmp_dev) == -1);
+    CHECK(u_array_add(&devices->r, tmp_dev) == -1);
+    u_safe_free((void**)&tmp_dev);
+    CHECK(u_array_getr(&devices->r, (void**)out_dev, devices->r.length-1) == -1);
     return 0;
 err:
     *out_dev = NULL;
@@ -63,7 +66,7 @@ err:
 }
 
 int dev_init_device_ctx(struct device_context* dev_ctx) {
-    CHECK(u_array_init(&dev_ctx->device_ptrs.r, sizeof(struct device), RCN_STD_CAPACITY) == -1);
+    CHECK(u_array_init(&dev_ctx->devices.r, sizeof(struct device), RCN_STD_CAPACITY) == -1);
     return 0;
 err:
     ERR_LOG("e_init_device_ctx");
@@ -75,7 +78,7 @@ int dev_init_devices_arg(struct epoll_context* ep_ctx, struct device_context* de
         char* dev_path = {};
         CHECK(u_array_getv(&dev_paths->r, &dev_path, i) == -1);
         struct device* dev = {};
-        CHECK(dev_init_device(ep_ctx, &dev_ctx->device_ptrs, dev_path, &dev) == -1);
+        CHECK(dev_init_device(ep_ctx, &dev_ctx->devices, dev_path, &dev) == -1);
         CHECK(stream_queue_writing_socket(ep_ctx, p_ctx->peer_stream, PEER_HEADER_DEV_CRT, sizeof(struct device_info), &dev->info) == -1);
     }
     return 0;
@@ -85,13 +88,13 @@ err:
 }
 
 int dev_close_device_ctx(struct epoll_context* ep_ctx, struct device_context* dev_ctx) {
-    while (dev_ctx->device_ptrs.r.length > 0) {
+    while (dev_ctx->devices.r.length > 0) {
         struct device* dev = {};
-        CHECK(u_array_getr(&dev_ctx->device_ptrs.r, (void**)&dev, 0) == -1);
+        CHECK(u_array_getr(&dev_ctx->devices.r, (void**)&dev, 0) == -1);
         CHECK(e_epoll_close_remove_simple(ep_ctx, dev->stream) == -1);
-        CHECK(u_array_remove(&dev_ctx->device_ptrs.r, 0) == -1);
+        CHECK(u_array_remove(&dev_ctx->devices.r, 0) == -1);
     }
-    CHECK(u_array_free(&dev_ctx->device_ptrs.r) == -1);
+    CHECK(u_array_free(&dev_ctx->devices.r) == -1);
     return 0;
 err:
     ERR_LOG("dev_close_device_ctx");
@@ -196,7 +199,7 @@ err:
 
 int dev_emit_event_msg(struct d_context* d_ctx, struct peer_msg_event event) {
     struct device *dev = NULL;
-    device_arr* devices = &d_ctx->device_ctx->device_ptrs;
+    device_arr* devices = &d_ctx->device_ctx->devices;
     for (size_t i = 0; i < devices->r.length; i++) {
         CHECK(u_array_getr(&devices->r, (void**)&dev, i) == -1);
         if (dev->info.random_id == event.random_id)
@@ -252,8 +255,8 @@ err:
 }
 
 int dev_close_dev(struct device_context* dev_ctx, struct epoll_stream* stream) {
-    size_t index = TRY(u_array_find_index(&dev_ctx->device_ptrs.r, &stream), -1);
-    CHECK(u_array_remove(&dev_ctx->device_ptrs.r, index) == -1);
+    size_t index = TRY(u_array_find_index(&dev_ctx->devices.r, &stream), -1);
+    CHECK(u_array_remove(&dev_ctx->devices.r, index) == -1);
     return 0;
 err:
     ERR_LOG("e_close_dev");
@@ -284,8 +287,8 @@ err:
 int dev_handler(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item) {
     bool found_dev = false;
     struct device* dev = {};
-    for (size_t i = 0; i < d_ctx->device_ctx->device_ptrs.r.length; i++) {
-        CHECK(u_array_getr(&d_ctx->device_ctx->device_ptrs.r, (void**)&dev, i) == -1);
+    for (size_t i = 0; i < d_ctx->device_ctx->devices.r.length; i++) {
+        CHECK(u_array_getr(&d_ctx->device_ctx->devices.r, (void**)&dev, i) == -1);
         if (dev->stream != stream)
             continue;
         found_dev = true;

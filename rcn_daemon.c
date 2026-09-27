@@ -317,7 +317,7 @@ static int d_init(struct daemon_arg arg) {
 
     if (arg.type == DAEMON_CLIENT) {
         CHECK(dev_init_devices_arg(&ep_ctx, &device_ctx, &peer_ctx, arg.devices_arg) == -1);
-        CHECK(dev_ctrl_devices(&d_ctx, &device_ctx.device_ptrs, DEV_CTRL_CAPTURE) == -1);
+        CHECK(dev_ctrl_devices(&d_ctx, &device_ctx.devices, DEV_CTRL_CAPTURE) == -1);
         CHECK(u_array_free(&arg.devices_arg->r) == -1);
     }
 

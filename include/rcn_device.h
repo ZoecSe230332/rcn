@@ -38,7 +38,7 @@ struct device {
 };
 
 struct device_context {
-    device_arr device_ptrs;
+    device_arr devices;
 };
 
 enum device_ctrl {

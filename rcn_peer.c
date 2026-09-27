@@ -10,7 +10,7 @@
 static int handler_dev_crt(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item) {
     (void)stream;
     struct device_info* new_dev = stream_item->payload.msg.buffer;
-    CHECK(dev_init_udev(d_ctx->ep_ctx, &d_ctx->device_ctx->device_ptrs, new_dev) == -1);
+    CHECK(dev_init_udev(d_ctx->ep_ctx, &d_ctx->device_ctx->devices, new_dev) == -1);
     return 0;
 err:
     ERR_LOG("handler_dev_crt");
@@ -42,9 +42,9 @@ static int handler_pause(struct d_context* d_ctx, struct epoll_stream* stream, s
     (void)stream;
     (void)stream_item;
     if (d_ctx->type == DAEMON_CLIENT)
-        CHECK(dev_ctrl_devices(d_ctx, &d_ctx->device_ctx->device_ptrs, DEV_CTRL_RELEASE) == -1);
+        CHECK(dev_ctrl_devices(d_ctx, &d_ctx->device_ctx->devices, DEV_CTRL_RELEASE) == -1);
     else if (d_ctx->type == DAEMON_SERVER)
-        CHECK(dev_release_virt_keys_all(d_ctx->ep_ctx, &d_ctx->device_ctx->device_ptrs) == -1);
+        CHECK(dev_release_virt_keys_all(d_ctx->ep_ctx, &d_ctx->device_ctx->devices) == -1);
     epoll_stream_arr* relay_streams = &d_ctx->relay_ctx->relay_streams;
     CHECK(r_broadcast_relay_header(d_ctx->ep_ctx, relay_streams, RELAY_HEADER_PAUSE) == -1);
     d_ctx->state = RCN_PAUSED;
@@ -58,9 +58,9 @@ static int handler_resume(struct d_context* d_ctx, struct epoll_stream* stream, 
     (void)stream;
     (void)stream_item;
     if (d_ctx->type == DAEMON_CLIENT)
-        CHECK(dev_ctrl_devices(d_ctx, &d_ctx->device_ctx->device_ptrs, DEV_CTRL_CAPTURE) == -1);
+        CHECK(dev_ctrl_devices(d_ctx, &d_ctx->device_ctx->devices, DEV_CTRL_CAPTURE) == -1);
     else if (d_ctx->type == DAEMON_SERVER)
-        CHECK(dev_release_virt_keys_all(d_ctx->ep_ctx, &d_ctx->device_ctx->device_ptrs) == -1);
+        CHECK(dev_release_virt_keys_all(d_ctx->ep_ctx, &d_ctx->device_ctx->devices) == -1);
     epoll_stream_arr* relay_streams = &d_ctx->relay_ctx->relay_streams;
     CHECK(r_broadcast_relay_header(d_ctx->ep_ctx, relay_streams, RELAY_HEADER_RESUME) == -1);
     d_ctx->state = RCN_RUNNING;
