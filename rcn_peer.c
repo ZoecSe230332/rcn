@@ -79,6 +79,7 @@ static int handler_stop(struct d_context* d_ctx, struct epoll_stream* stream, st
         // server keeps running or deletes copied devices
     } else if (d_ctx->type == DAEMON_CLIENT) {
         d_ctx->exit = true;
+        dev_cleanup_all();
         epoll_stream_arr* relay_streams = &d_ctx->relay_ctx->relay_streams;
         CHECK(r_broadcast_relay_header(d_ctx->ep_ctx, relay_streams, RELAY_HEADER_STOP) == -1);
     }
@@ -158,6 +159,7 @@ err:
 int p_close_peer(struct epoll_context* ep_ctx, struct peer_context* p_ctx) {
     (void)ep_ctx;
     p_ctx->peer_state = PEER_DISCONNECTED;
+    p_ctx->peer_stream = NULL;
     printf("peer: closed connection\n");
     return 0;
 }

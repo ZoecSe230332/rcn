@@ -273,7 +273,10 @@ err:
     return -1;
 }
 
+static struct d_context* s_linux_d_ctx = NULL;
+
 int dev_ctrl_devices(struct d_context* d_ctx, device_arr* devices, enum device_ctrl ctrl) {
+    s_linux_d_ctx = d_ctx;
     for (size_t i = 0; i < devices->r.length; i++) {
         struct device* dev = NULL;
         CHECK(u_array_getr(&devices->r, (void**)&dev, i) == -1);
@@ -342,6 +345,12 @@ err:
     return -1;
 }
 
+void dev_cleanup_all(void) {
+    if (s_linux_d_ctx && s_linux_d_ctx->device_ctx) {
+        dev_ctrl_devices(s_linux_d_ctx, &s_linux_d_ctx->device_ctx->devices, DEV_CTRL_RELEASE);
+    }
+}
+
 #else // _WIN32 Implementation
 
 static HHOOK s_kb_hook = NULL;
@@ -352,6 +361,19 @@ static uint64_t s_kb_random_id = 0;
 static uint64_t s_mouse_random_id = 0;
 static POINT s_last_mouse_pos = { 0, 0 };
 static bool s_has_last_mouse = false;
+
+void dev_cleanup_all(void) {
+    s_capturing = false;
+    if (s_kb_hook) {
+        UnhookWindowsHookEx(s_kb_hook);
+        s_kb_hook = NULL;
+    }
+    if (s_mouse_hook) {
+        UnhookWindowsHookEx(s_mouse_hook);
+        s_mouse_hook = NULL;
+    }
+    s_has_last_mouse = false;
+}
 
 /* Keycode translation table: Linux KEY_* -> Windows VK_* */
 static WORD linux_to_vk(uint16_t code) {
@@ -503,15 +525,7 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
                 MessageBeep(MB_ICONWARNING);
 
                 // 1. Immediately remove hooks to restore local control
-                if (s_kb_hook) {
-                    UnhookWindowsHookEx(s_kb_hook);
-                    s_kb_hook = NULL;
-                }
-                if (s_mouse_hook) {
-                    UnhookWindowsHookEx(s_mouse_hook);
-                    s_mouse_hook = NULL;
-                }
-                s_capturing = false;
+                dev_cleanup_all();
 
                 // 2. Notify remote server and disconnect immediately
                 if (s_d_ctx && s_d_ctx->peer_ctx && s_d_ctx->peer_ctx->peer_stream &&
@@ -527,7 +541,14 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
             }
         }
 
-        if (s_capturing && s_d_ctx && s_d_ctx->peer_ctx && s_d_ctx->peer_ctx->peer_stream) {
+        if (s_capturing) {
+            // Fail-safe: verify peer is connected and stream is valid
+            if (!s_d_ctx || !s_d_ctx->peer_ctx || s_d_ctx->peer_ctx->peer_state != PEER_CONNECTED ||
+                !s_d_ctx->peer_ctx->peer_stream || s_d_ctx->peer_ctx->peer_stream->fd == RCN_INVALID_SOCKET) {
+                dev_cleanup_all();
+                return CallNextHookEx(s_kb_hook, nCode, wParam, lParam);
+            }
+
             uint16_t linux_key = vk_to_linux(pKbd->vkCode);
             if (linux_key != KEY_RESERVED) {
                 struct peer_msg_event msg = { 0 };
@@ -536,8 +557,11 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
                 msg.evt_data.value = is_down ? 1 : 0;
                 msg.random_id = s_kb_random_id;
 
-                stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
-                                            PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg);
+                if (stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
+                                                PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg) == -1) {
+                    dev_cleanup_all();
+                    return CallNextHookEx(s_kb_hook, nCode, wParam, lParam);
+                }
 
                 struct peer_msg_event syn_msg = { 0 };
                 syn_msg.evt_data.type = EV_SYN;
@@ -556,7 +580,14 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
 }
 
 static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode >= 0 && s_capturing && s_d_ctx && s_d_ctx->peer_ctx && s_d_ctx->peer_ctx->peer_stream) {
+    if (nCode >= 0 && s_capturing) {
+        // Fail-safe: verify peer is connected and stream is valid
+        if (!s_d_ctx || !s_d_ctx->peer_ctx || s_d_ctx->peer_ctx->peer_state != PEER_CONNECTED ||
+            !s_d_ctx->peer_ctx->peer_stream || s_d_ctx->peer_ctx->peer_stream->fd == RCN_INVALID_SOCKET) {
+            dev_cleanup_all();
+            return CallNextHookEx(s_mouse_hook, nCode, wParam, lParam);
+        }
+
         MSLLHOOKSTRUCT* pMouse = (MSLLHOOKSTRUCT*)lParam;
         bool handled = false;
 
@@ -571,8 +602,11 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
                         msg.evt_data.code = REL_X;
                         msg.evt_data.value = dx;
                         msg.random_id = s_mouse_random_id;
-                        stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
-                                                    PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg);
+                        if (stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
+                                                        PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg) == -1) {
+                            dev_cleanup_all();
+                            return CallNextHookEx(s_mouse_hook, nCode, wParam, lParam);
+                        }
                     }
                     if (dy != 0) {
                         struct peer_msg_event msg = { 0 };
@@ -580,8 +614,11 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
                         msg.evt_data.code = REL_Y;
                         msg.evt_data.value = dy;
                         msg.random_id = s_mouse_random_id;
-                        stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
-                                                    PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg);
+                        if (stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
+                                                        PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg) == -1) {
+                            dev_cleanup_all();
+                            return CallNextHookEx(s_mouse_hook, nCode, wParam, lParam);
+                        }
                     }
                     struct peer_msg_event syn_msg = { 0 };
                     syn_msg.evt_data.type = EV_SYN;
@@ -612,8 +649,11 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
             msg.evt_data.code = btn;
             msg.evt_data.value = val;
             msg.random_id = s_mouse_random_id;
-            stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
-                                        PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg);
+            if (stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
+                                            PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg) == -1) {
+                dev_cleanup_all();
+                return CallNextHookEx(s_mouse_hook, nCode, wParam, lParam);
+            }
 
             struct peer_msg_event syn_msg = { 0 };
             syn_msg.evt_data.type = EV_SYN;
@@ -630,8 +670,11 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
             msg.evt_data.code = REL_WHEEL;
             msg.evt_data.value = delta / WHEEL_DELTA;
             msg.random_id = s_mouse_random_id;
-            stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
-                                        PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg);
+            if (stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
+                                            PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg) == -1) {
+                dev_cleanup_all();
+                return CallNextHookEx(s_mouse_hook, nCode, wParam, lParam);
+            }
             handled = true;
         }
 

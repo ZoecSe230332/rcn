@@ -22,6 +22,31 @@
 #include <sys/un.h>
 #include <unistd.h>
 #endif
+#ifdef _WIN32
+#include <mstcpip.h>
+#endif
+
+static void configure_socket_keepalive(rcn_socket_t sock) {
+#ifdef _WIN32
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (const char*)&opt, sizeof(opt));
+    struct tcp_keepalive alive;
+    alive.onoff = 1;
+    alive.keepalivetime = 2000;
+    alive.keepaliveinterval = 1000;
+    DWORD dwBytes = 0;
+    WSAIoctl(sock, SIO_KEEPALIVE_VALS, &alive, sizeof(alive), NULL, 0, &dwBytes, NULL, NULL);
+#else
+    int keepalive = 1;
+    int keepidle = 2;
+    int keepintvl = 1;
+    int keepcnt = 2;
+    setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+    setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+    setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+    setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+#endif
+}
 
 static int accept_isock(struct epoll_context* ep_ctx, struct peer_context* p_ctx, const struct epoll_stream* stream) {
     struct sockaddr_in p_iaddr = { 0 };
@@ -35,9 +60,12 @@ static int accept_isock(struct epoll_context* ep_ctx, struct peer_context* p_ctx
     }
     const int no_delay = 1;
     setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&no_delay, sizeof(no_delay));
+    configure_socket_keepalive(sock_fd);
     CHECK(rcn_set_nonblocking(sock_fd) == -1);
     CHECK(e_epoll_add_getr(ep_ctx, sock_fd, FD_PEER, &p_ctx->peer_stream) == -1);
     p_ctx->peer_state = PEER_CONNECTED;
+    printf("\n[SERVER] Client connected!\n");
+    fflush(stdout);
     return 0;
 err:
     ERR_LOG("accept_isock");
@@ -86,23 +114,10 @@ err:
 }
 
 int d_init_log(enum daemon_type d_type) {
-    const char* log_path = (d_type == DAEMON_SERVER) ? RCN_SERVER_LOG_PATH : RCN_CLIENT_LOG_PATH;
-    CHECK(log_path == NULL);
-#ifndef _WIN32
-    CHECK(freopen(log_path, "w", stdout) == NULL);
-    CHECK(freopen(log_path, "a", stderr) == NULL);
+    (void)d_type;
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
-#else
-    freopen(log_path, "w", stdout);
-    freopen(log_path, "a", stderr);
-    if (stdout) setvbuf(stdout, NULL, _IONBF, 0);
-    if (stderr) setvbuf(stderr, NULL, _IONBF, 0);
-#endif
     return 0;
-err:
-    ERR_LOG("d_init_log");
-    return -1;
 }
 
 static int resolve_host(const int port, const char *host, struct addrinfo** addr) {
@@ -130,6 +145,7 @@ static int init_peer_sock(const int port, const char *host) {
 #endif
     const int no_delay = 1;
     setsockopt(isock_fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&no_delay, sizeof(no_delay));
+    configure_socket_keepalive(isock_fd);
 
     struct addrinfo* p_info = NULL;
     CHECK(resolve_host(port, host, &p_info) == -1);

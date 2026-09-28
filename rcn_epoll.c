@@ -2,6 +2,7 @@
 #include "include/rcn_epoll.h"
 #include "include/rcn_stream.h"
 #include "include/rcn_daemon.h"
+#include "include/rcn_device.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -131,7 +132,23 @@ int e_epoll_close_remove(struct d_context* d_ctx, struct epoll_stream* stream) {
         case FD_RELAY: r_close_relay(d_ctx->relay_ctx, stream); break;
         case FD_DEV: dev_close_dev(d_ctx->device_ctx, stream); break;
         case FD_ISOCK: p_close_peer(d_ctx->ep_ctx, d_ctx->peer_ctx); break;
-        case FD_PEER: p_close_peer(d_ctx->ep_ctx, d_ctx->peer_ctx); break;
+        case FD_PEER: {
+            p_close_peer(d_ctx->ep_ctx, d_ctx->peer_ctx);
+            if (d_ctx->type == DAEMON_CLIENT) {
+                printf("\n======================================================\n");
+                printf(" [DISCONNECTED] Connection to server lost!\n");
+                printf(" Restoring local keyboard and mouse control...\n");
+                printf("======================================================\n");
+                fflush(stdout);
+                dev_cleanup_all();
+                d_ctx->exit = true;
+            } else if (d_ctx->type == DAEMON_SERVER) {
+                printf("\n[SERVER] Client disconnected. Waiting for new connection...\n");
+                fflush(stdout);
+                dev_release_virt_keys_all(d_ctx->ep_ctx, &d_ctx->device_ctx->devices);
+            }
+            break;
+        }
         default: ERR_GOTO(err, "err: unknown fd_type\n");
     }
     CHECK(e_epoll_close_remove_simple(d_ctx->ep_ctx, stream) == -1);
@@ -173,6 +190,7 @@ int e_epoll_wait(struct epoll_context* ep_ctx, struct epoll_event* events, int m
             fprintf(stderr, "======================================================\n");
             fflush(stderr);
             MessageBeep(MB_ICONWARNING);
+            dev_cleanup_all();
             exit(0);
         }
         TranslateMessage(&msg);

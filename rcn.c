@@ -1,7 +1,37 @@
 #include "include/rcn.h"
 #include "include/rcn_arg.h"
 #include "include/rcn_daemon.h"
+#include "include/rcn_device.h"
 #include <string.h>
+#include <signal.h>
+#include <stdio.h>
+
+#ifdef _WIN32
+static BOOL WINAPI console_ctrl_handler(DWORD dwCtrlType) {
+    switch (dwCtrlType) {
+        case CTRL_C_EVENT:
+        case CTRL_BREAK_EVENT:
+        case CTRL_CLOSE_EVENT:
+        case CTRL_LOGOFF_EVENT:
+        case CTRL_SHUTDOWN_EVENT:
+            fprintf(stderr, "\n[rcn] Caught termination signal. Releasing all inputs and stopping...\n");
+            fflush(stderr);
+            dev_cleanup_all();
+            rcn_platform_cleanup();
+            ExitProcess(0);
+        default:
+            return FALSE;
+    }
+}
+#else
+static void sigint_handler(int sig) {
+    (void)sig;
+    fprintf(stderr, "\n[rcn] Caught termination signal. Releasing all devices and stopping...\n");
+    fflush(stderr);
+    dev_cleanup_all();
+    exit(0);
+}
+#endif
 
 static int subaction_daemon(enum daemon_type d_type, enum subaction_type sa_type) {
     struct relay_arg r_arg = { 0 };
@@ -27,12 +57,17 @@ int action_start(int argc, char** argv) {
     struct daemon_arg d_arg = { 0 };
     d_arg.type = DAEMON_SERVER;
     d_arg.port = arg_ctx.port.val.v_int;
-    struct relay_arg r_arg = { 0 };
-    r_arg.header_sent = RELAY_HEADER_START;
-    r_arg.d_type = DAEMON_SERVER;
-    r_arg.sleep = true;
-    CHECK(daemon_start(d_arg, r_arg) == -1);
+
+    printf("\n======================================================\n");
+    printf("              rcn - Server Mode\n");
+    printf("  Port: %d\n", d_arg.port);
+    printf("  Emergency Stop: [Ctrl + Alt + Esc]\n");
+    printf("  Press Ctrl + C in this terminal to stop\n");
+    printf("======================================================\n\n");
     u_print_server_info(d_arg.port);
+    fflush(stdout);
+
+    CHECK(d_init(d_arg) == -1);
     return 0;
 err:
     ERR_LOG("action_start");
@@ -66,13 +101,19 @@ int action_connect(int argc, char** argv) {
     else
         d_arg.devices_arg = NULL;
     d_arg.type = DAEMON_CLIENT;
-    struct relay_arg r_arg = { 0 };
-    r_arg.header_sent = RELAY_HEADER_IDLE;
-    r_arg.d_type = DAEMON_CLIENT;
-    r_arg.sleep = true;
-    CHECK(daemon_start(d_arg, r_arg) == -1);
+
+    printf("\n======================================================\n");
+    printf("              rcn - Client Mode\n");
+    printf("  Target Server: %s:%d\n", d_arg.host, d_arg.port);
+    printf("  Emergency Stop: [Ctrl + Alt + Esc]\n");
+    printf("  Press Ctrl + C in this terminal to disconnect and stop\n");
+    printf("======================================================\n\n");
+    fflush(stdout);
+
+    int res = d_init(d_arg);
     if (d_arg.devices_arg != NULL)
-        CHECK(u_array_free(&d_arg.devices_arg->r) == -1);
+        u_array_free(&d_arg.devices_arg->r);
+    CHECK(res == -1);
     return 0;
 err:
     ERR_LOG("action_connect");
@@ -80,6 +121,13 @@ err:
 }
 
 int action_server(int argc, char** argv) {
+    if (argc == 2) {
+        char* default_argv[] = { argv[0], "start", "-p", "9999" };
+        return action_start(4, default_argv);
+    }
+    if (argc >= 4 && (strcmp(argv[2], "-p") == 0 || strcmp(argv[2], "--port") == 0)) {
+        return action_start(argc, argv);
+    }
     if (argc < 3)
         EARG_COUNT(ARG_ACTION_SERVER, 3, argc);
     struct arg_context arg_ctx = { 0 };
@@ -162,6 +210,13 @@ int main(int argc, char** argv) {
     if (rcn_platform_init() == -1) {
         return -1;
     }
+
+#ifdef _WIN32
+    SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+#else
+    signal(SIGINT, sigint_handler);
+    signal(SIGTERM, sigint_handler);
+#endif
 
     if (argc < 2) {
         help(2, (char*[]){"", ARG_FLAG_HELP});

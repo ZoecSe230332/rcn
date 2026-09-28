@@ -24,22 +24,16 @@ echo ======================================================
 echo.
 echo   [1] Start Server (Listen for incoming inputs on this PC)
 echo   [2] Connect Client (Send mouse/keyboard to remote PC)
-echo   [3] Pause
-echo   [4] Resume
-echo   [5] View Server Logs
-echo   [6] Stop Server / Daemon
-echo   [7] Exit
+echo   [3] Force Stop / Clean Reset
+echo   [4] Exit
 echo.
 echo ======================================================
-set /p choice="Select an option [1-7] (default 1): "
+set /p choice="Select an option [1-4] (default 1): "
 if "%choice%"=="" set choice=1
 if "%choice%"=="1" goto start_server
 if "%choice%"=="2" goto start_client
-if "%choice%"=="3" goto do_pause
-if "%choice%"=="4" goto do_resume
-if "%choice%"=="5" goto do_log
-if "%choice%"=="6" goto do_stop
-if "%choice%"=="7" exit /b 0
+if "%choice%"=="3" goto do_stop
+if "%choice%"=="4" exit /b 0
 
 echo Invalid choice.
 pause
@@ -49,7 +43,10 @@ goto menu
 echo.
 set /p port="Enter port to listen on [default 9999]: "
 if "%port%"=="" set port=9999
+echo.
 echo Starting rcn server on port !port!...
+echo Press [Ctrl + C] in this window to stop the server.
+echo.
 "!RCN_EXE!" start -p !port!
 echo.
 pause
@@ -66,52 +63,24 @@ if "!host!"=="" (
 set /p port="Enter server port [default 9999]: "
 if "!port!"=="" set port=9999
 echo.
-echo Connecting to !host!:!port! (capturing keyboard and mouse)...
-echo [NOTE] When active, local keyboard and mouse are forwarded to the remote host.
+echo Connecting to !host!:!port!...
+echo [NOTE] Local keyboard and mouse are forwarded while connected.
 echo [HOTKEY] Press Ctrl + Alt + Esc at ANY time for Emergency Stop!
+echo Press [Ctrl + C] to disconnect.
 echo.
-"!RCN_EXE!" connect -s !host! -p !port! -d keyboard mouse
-echo.
-pause
-goto menu
-
-:do_pause
-echo.
-echo Sending pause command...
-"!RCN_EXE!" server pause 2>nul
-"!RCN_EXE!" client pause 2>nul
-echo.
-pause
-goto menu
-
-:do_resume
-echo.
-echo Sending resume command...
-"!RCN_EXE!" server resume 2>nul
-"!RCN_EXE!" client resume 2>nul
-echo.
-pause
-goto menu
-
-:do_log
-echo.
-echo --- Server Logs ---
-"!RCN_EXE!" server log
+"!RCN_EXE!" connect -s !host! -p !port!
 echo.
 pause
 goto menu
 
 :do_stop
 echo.
-echo Stopping daemon and disconnecting clients...
-"!RCN_EXE!" server stop 2>nul
-"!RCN_EXE!" client stop 2>nul
-ping 127.0.0.1 -n 2 >nul
+echo Terminating any active rcn processes and releasing inputs...
 tasklist /FI "IMAGENAME eq rcn.exe" 2>nul | find /I "rcn.exe" >nul
 if not errorlevel 1 (
     taskkill /F /IM rcn.exe >nul 2>&1
 )
-echo Done. All clients disconnected and server stopped.
+echo Done. All inputs released and processes stopped.
 echo.
 pause
 goto menu
