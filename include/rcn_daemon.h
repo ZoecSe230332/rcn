@@ -23,10 +23,10 @@ struct daemon_arg {
 };
 
 /* rcn_daemon.c */
-int d_init_dir();
+int d_init_dir(void);
 int d_init_log(enum daemon_type d_type);
 int d_print_log(enum daemon_type d_type);
-int d_fork(struct d_context* d_ctx, struct relay_arg r_arg);
+int d_init(struct daemon_arg arg);
 int daemon_start(struct daemon_arg d_arg, struct relay_arg r_arg);
 
 #endif //RCN_RCN_DAEMON_H

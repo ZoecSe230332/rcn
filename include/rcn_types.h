@@ -1,14 +1,15 @@
 #ifndef RCN_RCN_TYPES_H
 #define RCN_RCN_TYPES_H
 
+#include "rcn_platform.h"
+#include "rcn_input_types.h"
 #include "rcn_util.h"
-#include <linux/input.h>
 
 U_DEFINE_ARR(epoll_stream_arr, struct epoll_stream*);
 U_DEFINE_ARR(device_arr, struct device);
 U_DEFINE_ARR(char_arr, char);
 
-U_DEFINE_QUEUE(stream_queue, struct stream_data);
+U_DEFINE_QUEUE(stream_queue, struct stream_item);
 
 enum rcn_state {
     RCN_RUNNING,
@@ -69,12 +70,12 @@ struct epoll_stream {
     enum stream_operation default_op;
     enum stream_type default_type;
     enum fd_type fd_type;
-    int fd;
+    rcn_socket_t fd;
 };
 
 struct epoll_context {
     epoll_stream_arr stream_ptrs;    // stores pointers to struct epoll_stream
-    int epoll_fd;
+    rcn_socket_t epoll_fd;
 };
 
 enum daemon_type {

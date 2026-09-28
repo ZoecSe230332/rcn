@@ -4,11 +4,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-static char* subactions[SUBACTION_COUNT] = {
-    [SUBACTION_PAUSE] =  ARG_SUBACTION_PAUSE,
-    [SUBACTION_RESUME] = ARG_SUBACTION_RESUME,
-    [SUBACTION_STOP] = ARG_SUBACTION_STOP,
-    [SUBACTION_LOG] = ARG_SUBACTION_LOG,
+static const char* subactions[SUBACTION_COUNT] = {
+    ARG_SUBACTION_PAUSE,
+    ARG_SUBACTION_RESUME,
+    ARG_SUBACTION_STOP,
+    ARG_SUBACTION_LOG,
 };
 static const int subactions_length = sizeof(subactions) / sizeof(subactions[0]);
 
@@ -35,7 +35,7 @@ static const struct arg_handler handlers[] = {
 };
 static const int handlers_length = sizeof(handlers) / sizeof(handlers[0]);
 
-static void print_help() {
+static void print_help(void) {
     printf("Usage: rcn <action> <flag> <value> ...\n\n");
     printf("Possible actions are:");
     printf("\n\t%s: %s\n", ARG_ACTION_START, ARG_DESC_ACTION_START);
@@ -76,6 +76,7 @@ static int handle_arg(int argc, char** argv, int* i, struct arg_context* arg_ctx
         if (strcmp(handlers[fi].flag, arg) == 0 || strcmp(handlers[fi].flag_long, arg) == 0) {
             found_handler = true;
             CHECK(handlers[fi].handler(argc, argv, i, arg_ctx) == -1);
+            break;
         }
     }
     if (found_handler == false) {
@@ -93,7 +94,7 @@ err:
 static int validate_arg_ctx(struct arg_context* arg_ctx) {
     struct arg* args = (struct arg*)arg_ctx;
     size_t ctx_count = sizeof(struct arg_context) / sizeof(struct arg);
-    for (int i = 0; i < (int) ctx_count; i++) {
+    for (size_t i = 0; i < ctx_count; i++) {
         struct arg* a = &args[i];
         if (a->info.needed && !a->info.provided)
             EARG_MISSING();
@@ -121,6 +122,7 @@ err:
     ERR_LOG("arg_port");
     return -1;
 }
+
 int arg_host(int argc, char** argv, int* i, struct arg_context* ctx) {
     if (*i + 1 >= argc)
         EARG_MISSING_VALUE(ARG_FLAG_HOST);
@@ -135,10 +137,11 @@ err:
     ERR_LOG("arg_host");
     return -1;
 }
+
 int arg_devices(int argc, char** argv, int* i, struct arg_context* ctx) {
     if (*i + 1 >= argc)
         EARG_MISSING_VALUE(ARG_FLAG_DEVICES);
-    if (ctx->devices.info.needed == false)
+    if (ctx->devices.info.needed == false && ctx->devices.info.allowed == false)
         EARG_WRONG_FLAG(ARG_FLAG_DEVICES);
     if (ctx->devices.info.provided == true)
         EARG_AGAIN(ARG_FLAG_DEVICES);

@@ -2,31 +2,33 @@
 #include "include/rcn_daemon.h"
 #include "include/rcn_epoll.h"
 #include "include/rcn_relay.h"
-
-#include <signal.h>
-
 #include "include/rcn_stream.h"
 #include "include/rcn_types.h"
-#include <arpa/inet.h>
+
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#ifndef _WIN32
+#include <arpa/inet.h>
 #include <sys/prctl.h>
 #include <sys/un.h>
 #include <unistd.h>
+#endif
 
 struct sock_info {
-    char* sock_path;
+    const char* sock_path;
     size_t path_len;
 };
 
 static const char* relay_text[] = {
-    [RELAY_HEADER_IDLE] = "",
-    [RELAY_HEADER_START] = "started",
-    [RELAY_HEADER_PAUSE] = "paused",
-    [RELAY_HEADER_PAUSE_AGAIN] = "already paused",
-    [RELAY_HEADER_RESUME] = "resumed",
-    [RELAY_HEADER_RESUME_AGAIN] = "already resumed",
-    [RELAY_HEADER_STOP] = "stopped",
+    "",                 // RELAY_HEADER_IDLE
+    "started",          // RELAY_HEADER_START
+    "paused",           // RELAY_HEADER_PAUSE
+    "already paused",   // RELAY_HEADER_PAUSE_AGAIN
+    "resumed",          // RELAY_HEADER_RESUME
+    "already resumed",  // RELAY_HEADER_RESUME_AGAIN
+    "stopped",          // RELAY_HEADER_STOP
 };
 
 static int init_sockinfo(enum daemon_type d_type, struct sock_info* info) {
@@ -45,37 +47,72 @@ err:
     return -1;
 }
 
-int r_init_usock(char* sock_path, size_t path_len) {
+rcn_socket_t r_init_usock(const char* sock_path, size_t path_len) {
+    (void)path_len;
+#ifndef _WIN32
     unlink(sock_path);
-    int d_usock_fd = TRY(socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0), -1);
-    struct sockaddr_un d_uaddr = {
-        .sun_family = AF_UNIX,
-    };
-    memcpy(d_uaddr.sun_path, sock_path, path_len);
+#else
+    DeleteFileA(sock_path);
+#endif
+
+    rcn_socket_t d_usock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(d_usock_fd == RCN_INVALID_SOCKET);
+
+    CHECK(rcn_set_nonblocking(d_usock_fd) == -1);
+
+    struct sockaddr_un d_uaddr;
+    memset(&d_uaddr, 0, sizeof(d_uaddr));
+    d_uaddr.sun_family = AF_UNIX;
+    strncpy(d_uaddr.sun_path, sock_path, sizeof(d_uaddr.sun_path) - 1);
+
     CHECK(bind(d_usock_fd, (struct sockaddr*)&d_uaddr, sizeof(d_uaddr)) == -1);
     CHECK(listen(d_usock_fd, DEFAULT_USOCK_COUNT) == -1);
     return d_usock_fd;
 err:
+    if (d_usock_fd != RCN_INVALID_SOCKET)
+        rcn_close_socket(d_usock_fd);
     ERR_LOG("r_init_usock");
-    return -1;
+    return RCN_INVALID_SOCKET;
 }
 
-static int connect_usock(char* sock_path, size_t path_len) {
-    int usock_fd = TRY(socket(AF_UNIX, SOCK_STREAM, 0), -1);
-    struct sockaddr_un r_uaddr = {};
-    r_uaddr.sun_family = AF_UNIX;
-    memcpy(r_uaddr.sun_path, sock_path, path_len);
-    CHECK(connect(usock_fd, (struct sockaddr*)&r_uaddr, sizeof(r_uaddr)) == -1);
-    return usock_fd;
-err:
-    ERR_LOG("r_init_usock");
-    return -1;
+static rcn_socket_t connect_usock(const char* sock_path, size_t path_len) {
+    (void)path_len;
+    rcn_socket_t usock_fd = RCN_INVALID_SOCKET;
+
+    // Retry connection up to 50 times (5 seconds total) to allow daemon startup
+    for (int retry = 0; retry < 50; retry++) {
+        usock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (usock_fd == RCN_INVALID_SOCKET) {
+            rcn_sleep_ms(100);
+            continue;
+        }
+
+        struct sockaddr_un r_uaddr;
+        memset(&r_uaddr, 0, sizeof(r_uaddr));
+        r_uaddr.sun_family = AF_UNIX;
+        strncpy(r_uaddr.sun_path, sock_path, sizeof(r_uaddr.sun_path) - 1);
+
+        if (connect(usock_fd, (struct sockaddr*)&r_uaddr, sizeof(r_uaddr)) == 0) {
+            return usock_fd;
+        }
+
+        int err = rcn_get_socket_error();
+        rcn_close_socket(usock_fd);
+        usock_fd = RCN_INVALID_SOCKET;
+        if (retry == 0) {
+            fprintf(stderr, "\nconnect_usock attempt failed, err=%d\n", err);
+        }
+        rcn_sleep_ms(100);
+    }
+    int err = rcn_get_socket_error();
+    fprintf(stderr, "err: connect_usock final err: %d\n", err);
+    return RCN_INVALID_SOCKET;
 }
 
 int r_broadcast_relay_header(struct epoll_context* ep_ctx, epoll_stream_arr* relay_streams, enum relay_msg_header header) {
     for (size_t i = 0; i < relay_streams->r.length; i++) {
-        struct epoll_stream* relay_stream = {};
-        CHECK(u_array_getv(&relay_streams->r, &relay_stream, i) == -1);
+        struct epoll_stream* relay_stream = NULL;
+        CHECK(u_array_getv(&relay_streams->r, (void*)&relay_stream, i) == -1);
         CHECK(stream_queue_writing_socket(ep_ctx, relay_stream, header, 0, NULL) == -1);
     }
     return 0;
@@ -84,17 +121,18 @@ err:
     return -1;
 }
 
-void tstp_handler(int sig) {
+#ifndef _WIN32
+static void tstp_handler(int sig) {
     (void)sig;
     fprintf(stderr, "\rerr: cannot start daemon, see log for more info\n");
     exit(-1);
 }
 
-void cont_handler(int sig) {
+static void cont_handler(int sig) {
     (void)sig;
 }
 
-static int sleep_usock() {
+static int sleep_usock(void) {
     printf("...");
     fflush(stdout);
     signal(SIGCONT, cont_handler);
@@ -107,23 +145,58 @@ err:
     fprintf(stderr, "\rerr: sleep_usock: relay timeout, no response from daemon\n");
     return -1;
 }
+#else
+static int sleep_usock_win(enum daemon_type d_type) {
+    printf("...");
+    fflush(stdout);
+    HANDLE hReadyEvent = OpenEventA(SYNCHRONIZE, FALSE, (d_type == DAEMON_SERVER) ? "rcn_server_ready" : "rcn_client_ready");
+    if (hReadyEvent) {
+        DWORD wait_res = WaitForSingleObject(hReadyEvent, 5000);
+        CloseHandle(hReadyEvent);
+        if (wait_res != WAIT_OBJECT_0) {
+            fprintf(stderr, "\rerr: timeout waiting for daemon to initialize\n");
+            return -1;
+        }
+    } else {
+        rcn_sleep_ms(200);
+    }
+    return 0;
+}
+#endif
 
 int relay_start(struct relay_arg arg) {
-    if (arg.sleep == true)
+    if (arg.sleep == true) {
+#ifndef _WIN32
         CHECK(sleep_usock() == -1);
-    CHECK(prctl(PR_SET_NAME, RCN_PROC_NAME_RELAY, 0UL, 0UL, 0UL) == -1);
-    struct sock_info info = {};
+#else
+        CHECK(sleep_usock_win(arg.d_type) == -1);
+#endif
+    }
+#ifndef _WIN32
+    prctl(PR_SET_NAME, RCN_PROC_NAME_RELAY, 0UL, 0UL, 0UL);
+#endif
+    struct sock_info info = { 0 };
     CHECK(init_sockinfo(arg.d_type, &info) == -1);
-    int usock_fd = TRY(connect_usock(info.sock_path, info.path_len), -1);
+    rcn_socket_t usock_fd = connect_usock(info.sock_path, info.path_len);
+    CHECK(usock_fd == RCN_INVALID_SOCKET);
+
     printf("\rrcn>");
     fflush(stdout);
-    struct stream_header msg = {};
-    msg = (struct stream_header){ .value = arg.header_sent, .size = 0 };
-    CHECK(write(usock_fd, &msg, sizeof(msg)) == -1);
-    // blocking read on socket to wait for daemon
-    CHECK(read(usock_fd, &msg, sizeof(msg)) == -1);
+    struct stream_header msg = { 0 };
+    msg.value = arg.header_sent;
+    msg.size = 0;
+
+    int sent = rcn_send(usock_fd, &msg, sizeof(msg));
+    CHECK(sent != (int)sizeof(msg));
+
+    // blocking read on socket to wait for daemon response
+    int recvd = rcn_recv(usock_fd, &msg, sizeof(msg));
+    CHECK(recvd != (int)sizeof(msg));
+
     CHECK(u_close_connection(usock_fd) == -1);
-    printf("\rrcn: %s\n", relay_text[msg.value]);
+    if (msg.value >= 0 && (size_t)msg.value < sizeof(relay_text) / sizeof(relay_text[0])) {
+        printf("\rrcn: %s\n", relay_text[msg.value]);
+    }
     return 0;
 err:
     fprintf(stderr, "\r");
@@ -132,8 +205,9 @@ err:
 }
 
 int r_close_relay(struct relay_context* r_ctx, struct epoll_stream* stream) {
-    size_t index = TRY(u_array_find_index(&r_ctx->relay_streams.r, &stream), -1);
-    CHECK(u_array_remove(&r_ctx->relay_streams.r, index) == -1);
+    ssize_t index = u_array_find_index(&r_ctx->relay_streams.r, &stream);
+    CHECK(index == -1);
+    CHECK(u_array_remove(&r_ctx->relay_streams.r, (size_t)index) == -1);
     return 0;
 err:
     ERR_LOG("r_close_relay");
@@ -161,7 +235,8 @@ static int handler_pause(struct d_context* d_ctx, struct epoll_stream* stream, s
         CHECK(dev_release_virt_keys_all(d_ctx->ep_ctx, &d_ctx->device_ctx->devices) == -1);
     epoll_stream_arr* relay_streams = &d_ctx->relay_ctx->relay_streams;
     CHECK(r_broadcast_relay_header(d_ctx->ep_ctx, relay_streams, RELAY_HEADER_PAUSE) == -1);
-    CHECK(stream_queue_writing_socket(d_ctx->ep_ctx, d_ctx->peer_ctx->peer_stream, PEER_HEADER_PAUSE, 0, NULL) == -1);
+    if (d_ctx->peer_ctx && d_ctx->peer_ctx->peer_stream)
+        CHECK(stream_queue_writing_socket(d_ctx->ep_ctx, d_ctx->peer_ctx->peer_stream, PEER_HEADER_PAUSE, 0, NULL) == -1);
     d_ctx->state = RCN_PAUSED;
     return 0;
 err:
@@ -179,7 +254,10 @@ static int handler_resume(struct d_context* d_ctx, struct epoll_stream* stream, 
         CHECK(dev_ctrl_devices(d_ctx, &d_ctx->device_ctx->devices, DEV_CTRL_CAPTURE) == -1);
     else if (d_ctx->type == DAEMON_SERVER)
         CHECK(dev_release_virt_keys_all(d_ctx->ep_ctx, &d_ctx->device_ctx->devices) == -1);
-    CHECK(stream_queue_writing_socket(d_ctx->ep_ctx, d_ctx->peer_ctx->peer_stream, PEER_HEADER_RESUME, 0, NULL) == -1);
+    epoll_stream_arr* relay_streams = &d_ctx->relay_ctx->relay_streams;
+    CHECK(r_broadcast_relay_header(d_ctx->ep_ctx, relay_streams, RELAY_HEADER_RESUME) == -1);
+    if (d_ctx->peer_ctx && d_ctx->peer_ctx->peer_stream)
+        CHECK(stream_queue_writing_socket(d_ctx->ep_ctx, d_ctx->peer_ctx->peer_stream, PEER_HEADER_RESUME, 0, NULL) == -1);
     d_ctx->state = RCN_RUNNING;
     return 0;
 err:
@@ -194,7 +272,8 @@ static int handler_stop(struct d_context* d_ctx, struct epoll_stream* stream, st
     d_ctx->exit = true;
     epoll_stream_arr* relay_streams = &d_ctx->relay_ctx->relay_streams;
     CHECK(r_broadcast_relay_header(d_ctx->ep_ctx, relay_streams, RELAY_HEADER_STOP) == -1);
-    CHECK(stream_queue_writing_socket(d_ctx->ep_ctx, d_ctx->peer_ctx->peer_stream, PEER_HEADER_STOP, 0, NULL) == -1);
+    if (d_ctx->peer_ctx && d_ctx->peer_ctx->peer_stream)
+        CHECK(stream_queue_writing_socket(d_ctx->ep_ctx, d_ctx->peer_ctx->peer_stream, PEER_HEADER_STOP, 0, NULL) == -1);
     return 0;
 err:
     ERR_LOG("handler_stop");
@@ -204,7 +283,6 @@ err:
 int r_handler(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item) {
     switch (stream_item->payload.msg.header.value) {
         case RELAY_HEADER_IDLE: {
-            /* do nothing, relay hangs on blocking read() */
             break;
         }
         case RELAY_HEADER_START: {
@@ -231,9 +309,9 @@ err:
     return -1;
 }
 
-int r_init_relay_ctx(struct epoll_context* ep_ctx, struct relay_context* r_ctx, int usock_fd) {
+int r_init_relay_ctx(struct epoll_context* ep_ctx, struct relay_context* r_ctx, rcn_socket_t usock_fd) {
     r_ctx->usock_fd = usock_fd;
-    CHECK(u_array_init(&r_ctx->relay_streams.r, sizeof(struct relay*), RCN_STD_CAPACITY) == -1);
+    CHECK(u_array_init(&r_ctx->relay_streams.r, sizeof(struct epoll_stream*), RCN_STD_CAPACITY) == -1);
     CHECK(e_epoll_add(ep_ctx, usock_fd, FD_USOCK) == -1);
     return 0;
 err:
@@ -242,9 +320,8 @@ err:
 }
 
 int r_close_relay_ctx(struct epoll_context* ep_ctx, struct relay_context* r_ctx) {
-    // do not close usock_fd, its closed in close_epoll_ctx
     for (size_t i = 0; i < r_ctx->relay_streams.r.length; i++) {
-        struct epoll_stream* r_stream = {};
+        struct epoll_stream* r_stream = NULL;
         CHECK(u_array_getr(&r_ctx->relay_streams.r, (void**)&r_stream, i) == -1);
         CHECK(e_epoll_close_remove_simple(ep_ctx, r_stream) == -1);
     }

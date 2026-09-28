@@ -1,6 +1,7 @@
 #ifndef RCN_RCN_UTIL_H
 #define RCN_RCN_UTIL_H
 
+#include "rcn_platform.h"
 #include <stdio.h>
 
 struct u_array {
@@ -27,7 +28,7 @@ typedef struct {                    \
 
 /* rcn_util.c, u_misc */
 void u_safe_free(void** ptr);
-int u_close_connection(int fd);
+int u_close_connection(rcn_socket_t fd);
 
 /* rcn_util.c, u_array */
 int u_array_init(struct u_array* arr, size_t size, size_t capacity);

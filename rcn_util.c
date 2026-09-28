@@ -3,38 +3,51 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 /* u_misc */
 void u_safe_free(void** ptr) {
-    free(*ptr);
-    *ptr = NULL;
+    if (ptr && *ptr) {
+        free(*ptr);
+        *ptr = NULL;
+    }
 }
 
-int u_close_connection(int fd) {
-    int flags = TRY(fcntl(fd, F_GETFL, 0), -1);
-    CHECK(fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1);
-    // wait max. 1 second for the server to send a FIN paket, if not, force close the connection
-    struct timeval tv = {};
+int u_close_connection(rcn_socket_t fd) {
+    if (fd == RCN_INVALID_SOCKET)
+        return 0;
+
+#ifndef _WIN32
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1)
+        fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+    struct timeval tv = { 0 };
     tv.tv_sec = 1;
-    CHECK(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1);
-    CHECK(shutdown(fd, SHUT_WR) == -1);
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    shutdown(fd, SHUT_WR);
     uint8_t buffer[64] = { 0 };
     ssize_t bytes_read;
     while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {}
-    if (bytes_read == -1 && (errno != EAGAIN && errno != EWOULDBLOCK))
-        goto err;
     close(fd);
+#else
+    u_long mode = 0;
+    ioctlsocket(fd, FIONBIO, &mode);
+    DWORD tv = 1000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    shutdown(fd, SD_BOTH);
+    uint8_t buffer[64] = { 0 };
+    while (recv(fd, (char*)buffer, sizeof(buffer), 0) > 0) {}
+    closesocket(fd);
+#endif
     return 0;
-err:
-    close(fd);
-    ERR_LOG("c_close_connection");
-    return -1;
 }
 
 /* u_array */
-static int resize(void** data, size_t elm_size, size_t* capacity,size_t extra_elements) {
+static int resize(void** data, size_t elm_size, size_t* capacity, size_t extra_elements) {
     if (data == NULL)
         DO_GOTO(errno = EFAULT, err);
     size_t new_size = (*capacity + extra_elements) * elm_size;
@@ -42,7 +55,6 @@ static int resize(void** data, size_t elm_size, size_t* capacity,size_t extra_el
     CHECK(tmp == NULL);
     *data = tmp;
     *capacity += extra_elements;
-    printf("resize\n");
     return 0;
 err:
     ERR_LOG("u_array_resize");
@@ -50,15 +62,15 @@ err:
 }
 
 struct u_array u_array_create(size_t size, size_t capacity) {
-    struct u_array arr = {};
+    struct u_array arr = { 0 };
     arr.length = 0;
     arr.capacity = capacity;
     arr.size = size;
-    arr.data = TRY(calloc(capacity, size), NULL);
+    arr.data = calloc(capacity, size);
+    if (arr.data == NULL) {
+        ERR_LOG("u_array_create");
+    }
     return arr;
-err:
-    ERR_LOG("u_array_create");
-    return (struct u_array){.data = NULL};
 }
 
 int u_array_init(struct u_array* arr, size_t size, size_t capacity) {
@@ -88,7 +100,7 @@ int u_array_add(struct u_array* arr, void* data) {
         DO_GOTO(errno = EFAULT, err);
     if (arr->length == arr->capacity)
         CHECK(u_array_resize(arr, arr->capacity) == -1);
-    void* offset = arr->data + (arr->size * arr->length);
+    char* offset = (char*)arr->data + (arr->size * arr->length);
     memcpy(offset, data, arr->size);
     arr->length++;
     return 0;
@@ -102,7 +114,7 @@ int u_array_set(struct u_array* arr, void* data, size_t i) {
         DO_GOTO(errno = EFAULT, err);
     while (i >= arr->capacity)
         CHECK(u_array_resize(arr, arr->capacity) == -1);
-    void* offset = arr->data + (arr->size * i);
+    char* offset = (char*)arr->data + (arr->size * i);
     memcpy(offset, data, arr->size);
     if (i >= arr->length)
         arr->length = i + 1;
@@ -115,7 +127,7 @@ err:
 int u_array_delete(struct u_array* arr) {
     if (arr->data == NULL)
         DO_GOTO(errno = EFAULT, err);
-    CHECK(arr == NULL);
+    CHECK(arr->length == 0);
     arr->length--;
     return 0;
 err:
@@ -128,8 +140,8 @@ int u_array_remove(struct u_array* arr, size_t i) {
         DO_GOTO(errno = EFAULT, err);
     CHECK(arr->length == 0);
     CHECK(i >= arr->length);
-    void* dest = arr->data + (arr->size * i);
-    void* src = arr->data + (arr->size * (i+1));
+    char* dest = (char*)arr->data + (arr->size * i);
+    char* src = (char*)arr->data + (arr->size * (i + 1));
     size_t n = (arr->length - i - 1) * arr->size;
     memmove(dest, src, n);
     arr->length--;
@@ -144,9 +156,9 @@ int u_array_remove_get(struct u_array* arr, void* element, size_t i) {
         DO_GOTO(errno = EFAULT, err);
     CHECK(arr->length == 0);
     CHECK(i >= arr->length);
-    void* dest = arr->data + (arr->size * i);
+    char* dest = (char*)arr->data + (arr->size * i);
     memcpy(element, dest, arr->size);
-    void* src = arr->data + (arr->size * (i+1));
+    char* src = (char*)arr->data + (arr->size * (i + 1));
     size_t n = (arr->length - i - 1) * arr->size;
     memmove(dest, src, n);
     arr->length--;
@@ -160,7 +172,7 @@ int u_array_getr(struct u_array* arr, void** element, size_t i) {
     if (arr->data == NULL)
         DO_GOTO(errno = EFAULT, err);
     CHECK(i >= arr->length);
-    *element = arr->data + (arr->size * i);
+    *element = (char*)arr->data + (arr->size * i);
     return 0;
 err:
     ERR_LOG("u_array_getr");
@@ -171,7 +183,7 @@ int u_array_getv(struct u_array* arr, void* element, size_t i) {
     if (arr->data == NULL)
         DO_GOTO(errno = EFAULT, err);
     CHECK(i >= arr->length);
-    void* offset = arr->data + (arr->size * i);
+    char* offset = (char*)arr->data + (arr->size * i);
     memcpy(element, offset, arr->size);
     return 0;
 err:
@@ -183,7 +195,7 @@ ssize_t u_array_find_index(struct u_array* arr, void* element) {
     if (arr->data == NULL)
         DO_GOTO(errno = EFAULT, err);
     for (size_t i = 0; i < arr->length; i++) {
-        void* offset = arr->data + (arr->size * i);
+        char* offset = (char*)arr->data + (arr->size * i);
         if (memcmp(offset, element, arr->size) == 0)
             return (ssize_t)i;
     }
@@ -242,7 +254,7 @@ err:
 }
 
 int u_queue_free(struct u_queue* queue) {
-    CHECK(queue== NULL);
+    CHECK(queue == NULL);
     u_safe_free(&queue->data_array.data);
     return 0;
 err:

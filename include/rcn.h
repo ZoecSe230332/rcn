@@ -1,6 +1,7 @@
 #ifndef RCN_H
 #define RCN_H
 
+#include "rcn_platform.h"
 #include "rcn_types.h"
 #include <errno.h>
 #include <stdio.h>
@@ -35,19 +36,13 @@
 	if ((condition)) goto err; 		\
     } while(0)
 
-#define TRY(expr, err_val) ({            \
-    __typeof__(expr) _ret = (expr);      \
-    if (_ret == (err_val)) goto err;     \
-    _ret;                                \
-})
-
-#define RCN_DAEMON_DIR_PATH "/tmp/rcn/"
-#define RCN_SERVER_LOG_PATH RCN_DAEMON_DIR_PATH "server.log"
-#define RCN_CLIENT_LOG_PATH RCN_DAEMON_DIR_PATH "client.log"
-#define RCN_SERVER_SOCKET_PATH RCN_DAEMON_DIR_PATH "server.sock"
-#define RCN_SERVER_SOCKET_LEN sizeof(RCN_SERVER_SOCKET_PATH)
-#define RCN_CLIENT_SOCKET_PATH RCN_DAEMON_DIR_PATH "client.sock"
-#define RCN_CLIENT_SOCKET_LEN sizeof(RCN_CLIENT_SOCKET_PATH)
+#define RCN_DAEMON_DIR_PATH rcn_get_daemon_dir()
+#define RCN_SERVER_LOG_PATH rcn_get_server_log_path()
+#define RCN_CLIENT_LOG_PATH rcn_get_client_log_path()
+#define RCN_SERVER_SOCKET_PATH rcn_get_server_sock_path()
+#define RCN_SERVER_SOCKET_LEN (strlen(RCN_SERVER_SOCKET_PATH) + 1)
+#define RCN_CLIENT_SOCKET_PATH rcn_get_client_sock_path()
+#define RCN_CLIENT_SOCKET_LEN (strlen(RCN_CLIENT_SOCKET_PATH) + 1)
 #define RCN_STD_CAPACITY 10
 #define RCN_DEV_MAX_NAME_LEN 255
 

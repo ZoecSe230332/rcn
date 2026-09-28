@@ -1,10 +1,14 @@
 #ifndef RCN_RCN_ARG_H
 #define RCN_RCN_ARG_H
 
+#include "rcn_platform.h"
+
 #define ARG_ACTION_START 	"start"
 #define ARG_ACTION_CONNECT 	"connect"
 #define ARG_ACTION_SERVER   "server"
 #define ARG_ACTION_CLIENT   "client"
+#define ARG_ACTION_WORKER_SERVER "__worker_server"
+#define ARG_ACTION_WORKER_CLIENT "__worker_client"
 
 #define ARG_SUBACTION_PAUSE 	"pause"
 #define ARG_SUBACTION_RESUME 	"resume"
@@ -32,7 +36,7 @@
 
 #define ARG_DESC_FLAG_PORT       "Port on which to listen on/connect to"
 #define ARG_DESC_FLAG_HOST       "Hostname/ip-address of the server"
-#define ARG_DESC_FLAG_DEVICES    "List devices (event files) to capture, e.g. -d <evt1> <evt2> ..."
+#define ARG_DESC_FLAG_DEVICES    "List devices to capture, e.g. -d <evt1> <evt2> ... (on Windows: -d keyboard mouse)"
 #define ARG_DESC_FLAG_HELP       "Print the help for rcn, also a list of actions and subactions can be supplied for more detailed infos"
 
 #define ARG_HELP_ACTION_START   "Starts the server in the background, listening on the given port (-p/--port).\n\t" \
@@ -62,6 +66,7 @@ enum subaction_type {
 
 struct arg_info {
     bool needed;
+    bool allowed;
     bool provided;
 };
 
@@ -86,53 +91,53 @@ struct arg_context {
 };
 
 struct arg_help_data {
-    char* action;
-    char* help;
+    const char* action;
+    const char* help;
 };
 
-#define EARG_COUNT(action, count_min, count_got) ({                                                     \
+#define EARG_COUNT(action, count_min, count_got) do {                                                     \
     fprintf(stderr, "err: not enough arguments for action '%s', expected (at least) %d but got %d\n",   \
         action, count_min, count_got);                                                                  \
     goto err;                                                                                           \
-})
+} while (0)
 
-#define EARG_INVALID(value, type) ({                        \
+#define EARG_INVALID(value, type) do {                        \
     fprintf(stderr, "err: invalid value '%s' for '%s'\n",   \
         value, type);                                       \
     goto err;                                               \
-})
+} while (0)
 
-#define EARG_UNKNOWN(type, value) ({            \
+#define EARG_UNKNOWN(type, value) do {            \
     fprintf(stderr, "err: unknown %s '%s'\n",   \
         type, value);                           \
     goto err;                                   \
-})
+} while (0)
 
-#define EARG_MISSING_VALUE(flag) ({                             \
+#define EARG_MISSING_VALUE(flag) do {                             \
     fprintf(stderr, "err: missing value for flag '%s'\n", flag);\
     goto err;                                                   \
-})
+} while (0)
 
-#define EARG_MISSING() ({                                       \
+#define EARG_MISSING() do {                                       \
     fprintf(stderr, "err: missing flag/value\n");               \
     goto err;                                                   \
-})
+} while (0)
 
-#define EARG_WRONG_FLAG(flag) ({                                            \
+#define EARG_WRONG_FLAG(flag) do {                                            \
     fprintf(stderr, "err: invalid flag '%s'\n", flag);                      \
     goto err;                                                               \
-})
+} while (0)
 
-#define EARG_AGAIN(flag) ({                                            \
+#define EARG_AGAIN(flag) do {                                            \
     fprintf(stderr, "err: flag '%s' already used\n", flag);            \
     goto err;                                                          \
-})
+} while (0)
 
-typedef typeof(int(int argc, char** argv, int* i, struct arg_context* ctx)) *arg_handler_t;
+typedef int (*arg_handler_t)(int argc, char** argv, int* i, struct arg_context* ctx);
 
 struct arg_handler {
-    char* flag;
-    char* flag_long;
+    const char* flag;
+    const char* flag_long;
     arg_handler_t handler;
 };
 

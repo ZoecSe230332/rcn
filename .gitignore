@@ -1,1 +1,6 @@
 .idea
+build/
+*.exe
+*.obj
+*.o
+*.log

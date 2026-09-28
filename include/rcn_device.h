@@ -3,34 +3,17 @@
 
 #include "rcn_types.h"
 #include <stdint.h>
+
+#ifndef _WIN32
 #include <linux/uinput.h>
 #include <linux/input.h>
 #include <linux/input-event-codes.h>
-
-#define HAS_BIT(array, bit) (((array)[(bit)/8] >> ((bit)%8)) & 1)
-
-#define MAX_EVT_BYTES   ((EV_MAX+7) / 8)
-#define MAX_KEY_BYTES   ((KEY_MAX+7) / 8)
-#define MAX_ABS_BYTES   ((ABS_MAX+7) / 8)
-#define MAX_REL_BYTES   ((REL_MAX+7) / 8)
-#define MAX_PROP_BYTES  ((INPUT_PROP_MAX+7) / 8)
+#endif
 
 /* forward declarations */
 struct d_context;
 struct peer_msg_event;
 struct peer_context;
-
-struct device_info {
-    uint8_t evtbit[MAX_EVT_BYTES];
-    uint8_t keybit[MAX_KEY_BYTES];
-    uint8_t absbit[MAX_ABS_BYTES];
-    uint8_t relbit[MAX_REL_BYTES];
-    uint8_t propbit[MAX_PROP_BYTES];
-    char name[UINPUT_MAX_NAME_SIZE];
-    struct input_absinfo absinfo[ABS_MAX+1];
-    struct input_id dev_id;
-    size_t random_id;
-};
 
 struct device {
     struct device_info info;
@@ -51,7 +34,7 @@ int dev_init_device(struct epoll_context* ep_ctx, device_arr* devices, const cha
 int dev_init_device_ctx(struct device_context* dev_ctx);
 int dev_close_device_ctx(struct epoll_context* ep_ctx, struct device_context* dev_ctx);
 int dev_grab_device_by_ptr(struct device* dev, enum device_ctrl ctrl);
-int dev_get_device_info(int dev_fd, struct device* dev);
+int dev_get_device_info(rcn_socket_t dev_fd, struct device* dev);
 int dev_init_udev(struct epoll_context* ep_ctx, device_arr* devices, struct device_info* info_template);
 int dev_close_dev(struct device_context* dev_ctx, struct epoll_stream* stream);
 int dev_handler(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item);

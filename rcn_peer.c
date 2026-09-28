@@ -4,12 +4,15 @@
 #include "include/rcn_peer.h"
 #include "include/rcn_stream.h"
 #include <string.h>
-#include <sys/epoll.h>
+#include <stdio.h>
+
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 static int handler_dev_crt(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item) {
     (void)stream;
-    struct device_info* new_dev = stream_item->payload.msg.buffer;
+    struct device_info* new_dev = (struct device_info*)stream_item->payload.msg.buffer;
     CHECK(dev_init_udev(d_ctx->ep_ctx, &d_ctx->device_ctx->devices, new_dev) == -1);
     return 0;
 err:
@@ -22,9 +25,6 @@ static int handler_dev_del(struct d_context* d_ctx, struct epoll_stream* stream,
     (void)stream;
     (void)stream_item;
     return 0;
-//err:
-    ERR_LOG("handler_dev_del");
-    return -1;
 }
 
 static int handler_event(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item) {
@@ -53,6 +53,7 @@ err:
     ERR_LOG("handler_pause");
     return -1;
 }
+
 static int handler_resume(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item) {
     (void)d_ctx;
     (void)stream;
@@ -69,12 +70,13 @@ err:
     ERR_LOG("handler_resume");
     return -1;
 }
+
 static int handler_stop(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item) {
     (void)d_ctx;
     (void)stream;
     (void)stream_item;
     if (d_ctx->type == DAEMON_SERVER) {
-        // TODO: delete all udev
+        // server keeps running or deletes copied devices
     } else if (d_ctx->type == DAEMON_CLIENT) {
         d_ctx->exit = true;
         epoll_stream_arr* relay_streams = &d_ctx->relay_ctx->relay_streams;
@@ -120,7 +122,7 @@ err:
     return -1;
 }
 
-int p_init_peer_ctx(struct epoll_context* ep_ctx, struct peer_context* p_ctx, int isock_fd, enum daemon_type d_type) {
+int p_init_peer_ctx(struct epoll_context* ep_ctx, struct peer_context* p_ctx, rcn_socket_t isock_fd, enum daemon_type d_type) {
     if (d_type == DAEMON_SERVER) {
         p_ctx->peer_stream = NULL;
         CHECK(e_epoll_add_getr(ep_ctx, isock_fd, FD_ISOCK, &p_ctx->isock_stream) == -1);
