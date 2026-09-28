@@ -24,6 +24,7 @@
     #define RCN_INVALID_SOCKET INVALID_SOCKET
     #define RCN_SOCKET_ERROR SOCKET_ERROR
     #define rcn_close_socket(s) closesocket(s)
+    #define rcn_shutdown_socket(s) shutdown((s), SD_BOTH)
     #define rcn_send(s, buf, len) send((s), (const char*)(buf), (int)(len), 0)
     #define rcn_recv(s, buf, len) recv((s), (char*)(buf), (int)(len), 0)
     #define rcn_sleep_ms(ms) Sleep(ms)
@@ -116,6 +117,7 @@
     #define RCN_INVALID_SOCKET (-1)
     #define RCN_SOCKET_ERROR (-1)
     #define rcn_close_socket(s) close(s)
+    #define rcn_shutdown_socket(s) shutdown((s), SHUT_RDWR)
     #define rcn_send(s, buf, len) send((s), (buf), (len), 0)
     #define rcn_recv(s, buf, len) recv((s), (buf), (len), 0)
     #define rcn_sleep_ms(ms) usleep((ms) * 1000)

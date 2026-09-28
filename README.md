@@ -21,8 +21,12 @@
 - **Daemon & IPC Architecture**:
   - Runs in the background as a detached daemon.
   - Uses native `AF_UNIX` domain sockets on both Linux (`/tmp/rcn/`) and Windows (`%TEMP%\rcn\`) for non-blocking local IPC.
-- **Runtime Session Management**:
-  - Dynamically `pause`, `resume`, `stop`, or query `log` from separate CLI commands or launcher scripts without terminating the daemon.
+- **Automatic IP & Port Discovery**:
+  - Automatically queries and displays active network interface IPs and the listening port upon server start for easy connection setup.
+- **Emergency Stop Keybind**:
+  - Press **`Ctrl + Alt + Esc`** (or `Ctrl + Alt + Pause`) at any time to instantly unhook/ungrab all inputs, notify peers, and terminate `rcn`.
+- **Reliable Disconnection & Session Management**:
+  - Stopping the server immediately shuts down active peer connections, releases all virtual keys, and terminates cleanly on the first attempt.
 - **Ready-to-Use Windows Launchers**:
   - Double-clickable batch files (`run.bat`, `start_server.bat`, `stop_server.bat`) for quick access without opening a terminal.
 
@@ -129,6 +133,15 @@ Start the server in the background to receive inputs:
   ```bash
   ./rcn start -p 9999
   ```
+
+Upon startup, `rcn` prints all available IP addresses on the host:
+```text
+rcn: Server listening on port 9999
+rcn: IP address(es) for client to connect to:
+       -> 192.168.1.150 (port 9999)
+```
+
+> **Emergency Stop Hotkey**: If you ever need to immediately unhook/ungrab devices and terminate `rcn`, press **`Ctrl + Alt + Esc`** (or `Ctrl + Alt + Pause`) on your keyboard. This restores local controls instantly!
 
 #### 2. Connecting the Client (Sending Inputs)
 Connect to the server IP and begin forwarding input:

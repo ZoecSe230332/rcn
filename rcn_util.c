@@ -7,6 +7,9 @@
 #ifndef _WIN32
 #include <sys/socket.h>
 #include <unistd.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #endif
 
 /* u_misc */
@@ -44,6 +47,55 @@ int u_close_connection(rcn_socket_t fd) {
     closesocket(fd);
 #endif
     return 0;
+}
+
+void u_print_server_info(int port) {
+    printf("rcn: Server listening on port %d\n", port);
+    printf("rcn: IP address(es) for client to connect to:\n");
+    int count = 0;
+
+#ifndef _WIN32
+    struct ifaddrs *ifaddr = NULL, *ifa = NULL;
+    if (getifaddrs(&ifaddr) == 0) {
+        for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+            if (ifa->ifa_addr == NULL) continue;
+            if (ifa->ifa_addr->sa_family == AF_INET) {
+                struct sockaddr_in* sin = (struct sockaddr_in*)ifa->ifa_addr;
+                char ip_str[INET_ADDRSTRLEN] = { 0 };
+                inet_ntop(AF_INET, &sin->sin_addr, ip_str, sizeof(ip_str));
+                if (strncmp(ip_str, "127.", 4) != 0) {
+                    printf("       -> %s (port %d, %s)\n", ip_str, port, ifa->ifa_name);
+                    count++;
+                }
+            }
+        }
+        freeifaddrs(ifaddr);
+    }
+#else
+    char hostname[256] = { 0 };
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        struct addrinfo hints = { 0 };
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        struct addrinfo* res = NULL;
+        if (getaddrinfo(hostname, NULL, &hints, &res) == 0) {
+            for (struct addrinfo* p = res; p != NULL; p = p->ai_next) {
+                struct sockaddr_in* ipv4 = (struct sockaddr_in*)p->ai_addr;
+                char ip_str[INET_ADDRSTRLEN] = { 0 };
+                inet_ntop(AF_INET, &ipv4->sin_addr, ip_str, sizeof(ip_str));
+                if (strncmp(ip_str, "127.", 4) != 0 && strncmp(ip_str, "169.254.", 8) != 0) {
+                    printf("       -> %s (port %d)\n", ip_str, port);
+                    count++;
+                }
+            }
+            freeaddrinfo(res);
+        }
+    }
+#endif
+    if (count == 0) {
+        printf("       -> 127.0.0.1 (port %d, localhost)\n", port);
+    }
+    fflush(stdout);
 }
 
 /* u_array */

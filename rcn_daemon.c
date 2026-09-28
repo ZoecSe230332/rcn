@@ -174,11 +174,12 @@ err:
 }
 
 static int can_exit(struct d_context* d_ctx) {
+    static int exit_ticks = 0;
     if (d_ctx->exit == false)
         return 0;
-    if (d_ctx->relay_ctx->relay_streams.r.length > 0)
-        return 0;
-    return 1;
+    if (d_ctx->relay_ctx->relay_streams.r.length == 0 || ++exit_ticks >= 3)
+        return 1;
+    return 0;
 }
 
 static int dispatch_epoll(struct d_context* d_ctx, struct epoll_event* epoll_buff, size_t fd_count) {
@@ -352,6 +353,9 @@ int d_init(struct daemon_arg arg) {
     }
 #endif
     printf("rcn: daemon started\n");
+    if (arg.type == DAEMON_SERVER) {
+        u_print_server_info(arg.port);
+    }
     fflush(stdout);
     CHECK(d_loop(&d_ctx) == -1);
     CHECK(cleanup(&d_ctx) == -1);

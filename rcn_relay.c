@@ -266,14 +266,37 @@ err:
 }
 
 static int handler_stop(struct d_context* d_ctx, struct epoll_stream* stream, struct stream_item* stream_item) {
-    (void)d_ctx;
     (void)stream;
     (void)stream_item;
     d_ctx->exit = true;
+
+    // 1. Release virtual keys immediately so no keys stay held down
+    if (d_ctx->type == DAEMON_SERVER) {
+        dev_release_virt_keys_all(d_ctx->ep_ctx, &d_ctx->device_ctx->devices);
+    } else if (d_ctx->type == DAEMON_CLIENT) {
+        dev_ctrl_devices(d_ctx, &d_ctx->device_ctx->devices, DEV_CTRL_RELEASE);
+    }
+
+    // 2. If a client/server peer is connected, notify and disconnect immediately
+    if (d_ctx->peer_ctx) {
+        if (d_ctx->peer_ctx->peer_stream && d_ctx->peer_ctx->peer_stream->fd != RCN_INVALID_SOCKET) {
+            struct stream_header stop_hdr = { .size = 0, .value = PEER_HEADER_STOP };
+            rcn_send(d_ctx->peer_ctx->peer_stream->fd, &stop_hdr, sizeof(stop_hdr));
+            rcn_shutdown_socket(d_ctx->peer_ctx->peer_stream->fd);
+            rcn_close_socket(d_ctx->peer_ctx->peer_stream->fd);
+            d_ctx->peer_ctx->peer_stream->fd = RCN_INVALID_SOCKET;
+            d_ctx->peer_ctx->peer_state = PEER_DISCONNECTED;
+        }
+        if (d_ctx->peer_ctx->isock_stream && d_ctx->peer_ctx->isock_stream->fd != RCN_INVALID_SOCKET) {
+            rcn_close_socket(d_ctx->peer_ctx->isock_stream->fd);
+            d_ctx->peer_ctx->isock_stream->fd = RCN_INVALID_SOCKET;
+            d_ctx->peer_ctx->isock_state = PEER_DISCONNECTED;
+        }
+    }
+
+    // 3. Notify relay callers that we have stopped
     epoll_stream_arr* relay_streams = &d_ctx->relay_ctx->relay_streams;
     CHECK(r_broadcast_relay_header(d_ctx->ep_ctx, relay_streams, RELAY_HEADER_STOP) == -1);
-    if (d_ctx->peer_ctx && d_ctx->peer_ctx->peer_stream)
-        CHECK(stream_queue_writing_socket(d_ctx->ep_ctx, d_ctx->peer_ctx->peer_stream, PEER_HEADER_STOP, 0, NULL) == -1);
     return 0;
 err:
     ERR_LOG("handler_stop");

@@ -29,6 +29,7 @@ typedef struct {                    \
 /* rcn_util.c, u_misc */
 void u_safe_free(void** ptr);
 int u_close_connection(rcn_socket_t fd);
+void u_print_server_info(int port);
 
 /* rcn_util.c, u_array */
 int u_array_init(struct u_array* arr, size_t size, size_t capacity);

@@ -32,6 +32,7 @@ int action_start(int argc, char** argv) {
     r_arg.d_type = DAEMON_SERVER;
     r_arg.sleep = true;
     CHECK(daemon_start(d_arg, r_arg) == -1);
+    u_print_server_info(d_arg.port);
     return 0;
 err:
     ERR_LOG("action_start");
@@ -117,6 +118,7 @@ int action_worker_server(int argc, char** argv) {
     struct daemon_arg d_arg = { 0 };
     d_arg.type = DAEMON_SERVER;
     d_arg.port = arg_ctx.port.val.v_int;
+    u_print_server_info(d_arg.port);
     CHECK(d_init(d_arg) == -1);
     return 0;
 err:

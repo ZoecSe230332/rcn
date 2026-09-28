@@ -305,6 +305,33 @@ int dev_handler(struct d_context* d_ctx, struct epoll_stream* stream, struct str
         break;
     }
     CHECK(found_dev == false);
+
+    // Emergency stop keybind check: Ctrl + Alt + Esc / Pause
+    struct input_event evt = stream_item->payload.evt;
+    static bool s_l_ctrl = false;
+    static bool s_l_alt = false;
+    if (evt.type == EV_KEY) {
+        if (evt.code == KEY_LEFTCTRL || evt.code == KEY_RIGHTCTRL) s_l_ctrl = (evt.value != 0);
+        if (evt.code == KEY_LEFTALT  || evt.code == KEY_RIGHTALT)  s_l_alt  = (evt.value != 0);
+        if (s_l_ctrl && s_l_alt && (evt.code == KEY_ESC || evt.code == KEY_PAUSE) && evt.value == 1) {
+            fprintf(stderr, "\n======================================================\n");
+            fprintf(stderr, " [EMERGENCY STOP] Hotkey (Ctrl+Alt+Esc) Triggered!\n");
+            fprintf(stderr, " Releasing all grabbed devices and stopping...\n");
+            fprintf(stderr, "======================================================\n");
+            fflush(stderr);
+            dev_ctrl_devices(d_ctx, &d_ctx->device_ctx->devices, DEV_CTRL_RELEASE);
+            if (d_ctx->peer_ctx && d_ctx->peer_ctx->peer_stream && d_ctx->peer_ctx->peer_stream->fd != RCN_INVALID_SOCKET) {
+                struct stream_header stop_hdr = { .size = 0, .value = PEER_HEADER_STOP };
+                rcn_send(d_ctx->peer_ctx->peer_stream->fd, &stop_hdr, sizeof(stop_hdr));
+                rcn_shutdown_socket(d_ctx->peer_ctx->peer_stream->fd);
+                rcn_close_socket(d_ctx->peer_ctx->peer_stream->fd);
+                d_ctx->peer_ctx->peer_stream->fd = RCN_INVALID_SOCKET;
+            }
+            exit(0);
+            return 0;
+        }
+    }
+
     struct peer_msg_event msg = { 0 };
     msg.evt_data = stream_item->payload.evt;
     msg.random_id = dev->info.random_id;
@@ -459,29 +486,70 @@ static uint16_t vk_to_linux(DWORD vk) {
 }
 
 static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode >= 0 && s_capturing && s_d_ctx && s_d_ctx->peer_ctx && s_d_ctx->peer_ctx->peer_stream) {
+    if (nCode >= 0) {
         KBDLLHOOKSTRUCT* pKbd = (KBDLLHOOKSTRUCT*)lParam;
-        uint16_t linux_key = vk_to_linux(pKbd->vkCode);
-        if (linux_key != KEY_RESERVED) {
-            struct peer_msg_event msg = { 0 };
-            msg.evt_data.type = EV_KEY;
-            msg.evt_data.code = linux_key;
-            msg.evt_data.value = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) ? 1 : 0;
-            msg.random_id = s_kb_random_id;
+        bool is_down = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
 
-            stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
-                                        PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg);
+        // Emergency Stop Keybind: Ctrl + Alt + Esc or Ctrl + Alt + Pause
+        if (is_down) {
+            bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+            bool alt  = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            if (ctrl && alt && (pKbd->vkCode == VK_ESCAPE || pKbd->vkCode == VK_PAUSE)) {
+                fprintf(stderr, "\n======================================================\n");
+                fprintf(stderr, " [EMERGENCY STOP] Hotkey (Ctrl+Alt+Esc) Triggered!\n");
+                fprintf(stderr, " Immediately releasing all hooks and stopping rcn...\n");
+                fprintf(stderr, "======================================================\n");
+                fflush(stderr);
+                MessageBeep(MB_ICONWARNING);
 
-            struct peer_msg_event syn_msg = { 0 };
-            syn_msg.evt_data.type = EV_SYN;
-            syn_msg.evt_data.code = SYN_REPORT;
-            syn_msg.evt_data.value = 0;
-            syn_msg.random_id = s_kb_random_id;
-            stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
-                                        PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &syn_msg);
+                // 1. Immediately remove hooks to restore local control
+                if (s_kb_hook) {
+                    UnhookWindowsHookEx(s_kb_hook);
+                    s_kb_hook = NULL;
+                }
+                if (s_mouse_hook) {
+                    UnhookWindowsHookEx(s_mouse_hook);
+                    s_mouse_hook = NULL;
+                }
+                s_capturing = false;
 
-            // Suppress local keypress when captured
-            return 1;
+                // 2. Notify remote server and disconnect immediately
+                if (s_d_ctx && s_d_ctx->peer_ctx && s_d_ctx->peer_ctx->peer_stream &&
+                    s_d_ctx->peer_ctx->peer_stream->fd != RCN_INVALID_SOCKET) {
+                    struct stream_header stop_hdr = { .size = 0, .value = PEER_HEADER_STOP };
+                    rcn_send(s_d_ctx->peer_ctx->peer_stream->fd, &stop_hdr, sizeof(stop_hdr));
+                    rcn_shutdown_socket(s_d_ctx->peer_ctx->peer_stream->fd);
+                    rcn_close_socket(s_d_ctx->peer_ctx->peer_stream->fd);
+                    s_d_ctx->peer_ctx->peer_stream->fd = RCN_INVALID_SOCKET;
+                }
+
+                exit(0);
+            }
+        }
+
+        if (s_capturing && s_d_ctx && s_d_ctx->peer_ctx && s_d_ctx->peer_ctx->peer_stream) {
+            uint16_t linux_key = vk_to_linux(pKbd->vkCode);
+            if (linux_key != KEY_RESERVED) {
+                struct peer_msg_event msg = { 0 };
+                msg.evt_data.type = EV_KEY;
+                msg.evt_data.code = linux_key;
+                msg.evt_data.value = is_down ? 1 : 0;
+                msg.random_id = s_kb_random_id;
+
+                stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
+                                            PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &msg);
+
+                struct peer_msg_event syn_msg = { 0 };
+                syn_msg.evt_data.type = EV_SYN;
+                syn_msg.evt_data.code = SYN_REPORT;
+                syn_msg.evt_data.value = 0;
+                syn_msg.random_id = s_kb_random_id;
+                stream_queue_writing_socket(s_d_ctx->ep_ctx, s_d_ctx->peer_ctx->peer_stream,
+                                            PEER_HEADER_EVENT, sizeof(struct peer_msg_event), &syn_msg);
+
+                // Suppress local keypress when captured
+                return 1;
+            }
         }
     }
     return CallNextHookEx(s_kb_hook, nCode, wParam, lParam);

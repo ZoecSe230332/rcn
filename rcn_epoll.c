@@ -11,6 +11,8 @@ int e_init_epoll_ctx(struct epoll_context* ep_ctx) {
     CHECK(ep_ctx->epoll_fd == -1);
 #else
     ep_ctx->epoll_fd = 0;
+    RegisterHotKey(NULL, 0x5243, MOD_CONTROL | MOD_ALT, VK_ESCAPE);
+    RegisterHotKey(NULL, 0x5244, MOD_CONTROL | MOD_ALT, VK_PAUSE);
 #endif
     CHECK(u_array_init(&ep_ctx->stream_ptrs.r, sizeof(struct epoll_stream*), RCN_STD_CAPACITY) == -1);
     return 0;
@@ -31,6 +33,9 @@ int e_close_epoll_ctx(struct epoll_context* ep_ctx) {
         close(ep_ctx->epoll_fd);
         ep_ctx->epoll_fd = -1;
     }
+#else
+    UnregisterHotKey(NULL, 0x5243);
+    UnregisterHotKey(NULL, 0x5244);
 #endif
     return 0;
 err:
@@ -161,6 +166,15 @@ int e_epoll_wait(struct epoll_context* ep_ctx, struct epoll_event* events, int m
 #else
     MSG msg;
     while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+        if (msg.message == WM_HOTKEY) {
+            fprintf(stderr, "\n======================================================\n");
+            fprintf(stderr, " [EMERGENCY STOP] Global Hotkey (Ctrl+Alt+Esc) Pressed!\n");
+            fprintf(stderr, " Terminating rcn immediately...\n");
+            fprintf(stderr, "======================================================\n");
+            fflush(stderr);
+            MessageBeep(MB_ICONWARNING);
+            exit(0);
+        }
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
     }

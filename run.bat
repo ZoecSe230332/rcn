@@ -19,6 +19,7 @@ if not exist "!RCN_EXE!" (
 cls
 echo ======================================================
 echo              rcn - Remote Input Daemon
+echo       Emergency Stop Keybind: [Ctrl + Alt + Esc]
 echo ======================================================
 echo.
 echo   [1] Start Server (Listen for incoming inputs on this PC)
@@ -51,7 +52,6 @@ if "%port%"=="" set port=9999
 echo Starting rcn server on port !port!...
 "!RCN_EXE!" start -p !port!
 echo.
-echo Server is running! Clients can now connect to this PC.
 pause
 goto menu
 
@@ -67,7 +67,9 @@ set /p port="Enter server port [default 9999]: "
 if "!port!"=="" set port=9999
 echo.
 echo Connecting to !host!:!port! (capturing keyboard and mouse)...
-echo Note: When active, local keyboard and mouse are forwarded to the remote host.
+echo [NOTE] When active, local keyboard and mouse are forwarded to the remote host.
+echo [HOTKEY] Press Ctrl + Alt + Esc at ANY time for Emergency Stop!
+echo.
 "!RCN_EXE!" connect -s !host! -p !port! -d keyboard mouse
 echo.
 pause
@@ -101,10 +103,15 @@ goto menu
 
 :do_stop
 echo.
-echo Stopping daemon...
+echo Stopping daemon and disconnecting clients...
 "!RCN_EXE!" server stop 2>nul
 "!RCN_EXE!" client stop 2>nul
-echo Done.
+ping 127.0.0.1 -n 2 >nul
+tasklist /FI "IMAGENAME eq rcn.exe" 2>nul | find /I "rcn.exe" >nul
+if not errorlevel 1 (
+    taskkill /F /IM rcn.exe >nul 2>&1
+)
+echo Done. All clients disconnected and server stopped.
 echo.
 pause
 goto menu
